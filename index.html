@@ -78,6 +78,9 @@ button{font:inherit; color:inherit}
 .dot.live{animation:pulse 1.8s ease-out infinite}
 
 .controls{display:flex; flex-wrap:wrap; gap:10px 20px; align-items:center; justify-content:space-between}
+.datepick{display:inline-flex; align-items:center; gap:8px; padding:3px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink2); font-size:13px; font-weight:500}
+.datepick input{background:transparent; color:var(--ink); border:0; font:inherit; padding:5px 2px; cursor:pointer}
+.datepick.on{border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); color:var(--ink)}
 .seg,.chips{display:flex; flex-wrap:wrap; gap:6px}
 .seg{padding:3px; border:1px solid var(--border); border-radius:10px; background:var(--surface)}
 .seg button{border:0; background:transparent; padding:6px 14px; border-radius:7px; cursor:pointer; color:var(--ink2); font-weight:500}
@@ -173,6 +176,7 @@ td .sw{display:inline-block; margin-right:8px; vertical-align:middle}
       <button data-r="7d" aria-pressed="true">7 Hari</button>
       <button data-r="30d" aria-pressed="false">30 Hari</button>
     </div>
+    <label class="datepick" id="dayWrap">Pilih tanggal <input type="date" id="dayPick" aria-label="Pilih tanggal penjualan"></label>
     <div class="chips" role="group" aria-label="Kategori" id="cats"></div>
   </div>
 
@@ -214,7 +218,7 @@ td .sw{display:inline-block; margin-right:8px; vertical-align:middle}
       <div class="feed" id="feed"></div>
     </section>
     <section class="panel">
-      <div class="ph"><h2>Rincian produk</h2><span>Klik judul kolom untuk mengurutkan</span></div>
+      <div class="ph"><h2 id="tblTitle">Rincian produk</h2><span>Klik judul kolom untuk mengurutkan</span></div>
       <div class="tw"><table id="tbl"></table></div>
     </section>
   </div>
@@ -379,10 +383,11 @@ function sheetToTx(text) {
 }
 
 /* ===== State ===== */
-const S = { brand: "all", tx: [], range: "7d", cat: "all", source: "demo", sort: { k: "rev", d: -1 }, lastId: null, trendHover: false };
+const S = { day: "", brand: "all", tx: [], range: "7d", cat: "all", source: "demo", sort: { k: "rev", d: -1 }, lastId: null, trendHover: false };
 const $ = id => document.getElementById(id);
 
 function windowFor(range, now) {
+  if (range === "day" && S.day) { const p = S.day.split("-").map(Number), st = new Date(p[0], p[1] - 1, p[2]).getTime(); return { start: st, end: st + 864e5, bms: 36e5, n: 24, span: 864e5 }; }
   const e = new Date(now);
   if (range === "24h") { e.setMinutes(0, 0, 0); const end = e.getTime() + 36e5; return { start: end - 24 * 36e5, end: end, bms: 36e5, n: 24, span: 24 * 36e5 }; }
   e.setHours(0, 0, 0, 0); const end = e.getTime() + 864e5, n = range === "7d" ? 7 : 30;
@@ -402,13 +407,14 @@ function groupBy(a, b, key) {
 function deltaHTML(cur, prev) {
   if (!prev) return '<span class="delta flat">— <small>belum ada pembanding</small></span>';
   const p = (cur - prev) / prev * 100, cls = Math.abs(p) < .05 ? "flat" : p > 0 ? "up" : "down", ic = cls === "up" ? "▲" : cls === "down" ? "▼" : "■";
-  return '<span class="delta ' + cls + '">' + ic + " " + Math.abs(p).toFixed(1).replace(".", ",") + '% <small>vs periode sebelumnya</small></span>';
+  return '<span class="delta ' + cls + '">' + ic + " " + Math.abs(p).toFixed(1).replace(".", ",") + '% <small>' + (S.range === "day" ? "vs hari sebelumnya" : "vs periode sebelumnya") + '</small></span>';
 }
 
 /* ===== Render ===== */
 function render() {
   const now = Date.now(), W = windowFor(S.range, now);
-  const cur = sumRange(W.start, now + 1), prev = sumRange(W.start - W.span, now + 1 - W.span);
+  const hi = Math.min(now + 1, W.end);
+  const cur = sumRange(W.start, hi), prev = sumRange(W.start - W.span, hi - W.span);
 
   $("kpis").innerHTML = [
     ["Total omzet", rp(cur.rev), deltaHTML(cur.rev, prev.rev)],
@@ -417,20 +423,23 @@ function render() {
     ["Rata-rata per transaksi", rp(cur.aov), deltaHTML(cur.aov, prev.aov)]
   ].map(k => '<div class="panel kpi"><div class="lbl">' + k[0] + '</div><div class="val">' + k[1] + "</div>" + k[2] + "</div>").join("");
 
-  $("trendTitle").textContent = S.range === "24h" ? "Omzet per jam" : "Omzet per hari";
+  const dayFull = new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  $("trendTitle").textContent = S.range === "day" ? "Omzet per jam, " + dayFull.format(new Date(W.start)) : (W.bms === 36e5 ? "Omzet per jam" : "Omzet per hari");
+  $("tblTitle").textContent = S.range === "day" ? "Penjualan per produk, " + dayFull.format(new Date(W.start)) : "Rincian produk";
+  if (S.tx.length) { const ymd = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); $("dayPick").min = ymd(new Date(S.tx[0].t)); $("dayPick").max = ymd(new Date(now)); }
   if (!S.trendHover) drawTrend(W, now);
 
-  const cats = groupBy(W.start, now + 1, "c").sort((a, b) => b.rev - a.rev);
+  const cats = groupBy(W.start, hi, "c").sort((a, b) => b.rev - a.rev);
   const catSum = cats.reduce((a, x) => a + x.rev, 0);
   $("catTotal").textContent = rpC(catSum);
   $("catBars").innerHTML = cats.length ? cats.map(x => barRow(x.k, x.rev, cats[0].rev, catColor(x.k), Math.round(x.rev / catSum * 100) + "% · " + rpC(x.rev), x.k + ": " + rp(x.rev))).join("") : '<div class="empty">Belum ada transaksi pada periode ini.</div>';
 
-  const prods = groupBy(W.start, now + 1, "n").sort((a, b) => b.rev - a.rev);
+  const prods = groupBy(W.start, hi, "n").sort((a, b) => b.rev - a.rev);
   $("prodBars").innerHTML = prods.length ? prods.slice(0, 8).map(x => barRow(x.k, x.rev, prods[0].rev, catColor(x.c), rpC(x.rev), x.k + ": " + rp(x.rev) + " · " + nf.format(x.units) + " unit")).join("") : '<div class="empty">Belum ada transaksi pada periode ini.</div>';
 
-  const chs = groupBy(W.start, now + 1, "ch").sort((a, b) => b.rev - a.rev);
+  const chs = groupBy(W.start, hi, "ch").sort((a, b) => b.rev - a.rev);
   $("chBars").innerHTML = chs.map(x => barRow(x.k, x.rev, chs[0].rev, "var(--s1)", rpC(x.rev), x.k + ": " + rp(x.rev))).join("");
-  const rgs = groupBy(W.start, now + 1, "rg").sort((a, b) => b.rev - a.rev).slice(0, 6);
+  const rgs = groupBy(W.start, hi, "rg").sort((a, b) => b.rev - a.rev).slice(0, 6);
   $("rgBars").innerHTML = rgs.map(x => barRow(x.k, x.rev, rgs[0].rev, "var(--s1)", rpC(x.rev), x.k + ": " + rp(x.rev))).join("");
 
   renderFeed();
@@ -449,7 +458,8 @@ function renderFeed() {
   $("feedNote").textContent = S.source === "sheet" ? "Dari Google Sheets" : "Simulasi langsung";
 }
 function renderTable(W, now, prods) {
-  const prev = new Map(groupBy(W.start - W.span, now + 1 - W.span, "n").map(x => [x.k, x]));
+  const hi = Math.min(now + 1, W.end);
+  const prev = new Map(groupBy(W.start - W.span, hi - W.span, "n").map(x => [x.k, x]));
   const total = prods.reduce((a, x) => a + x.rev, 0);
   const rows = prods.map(x => { const pv = prev.get(x.k); return { k: x.k, c: x.c, units: x.units, rev: x.rev, share: total ? x.rev / total * 100 : 0, d: pv && pv.rev ? (x.rev - pv.rev) / pv.rev * 100 : null }; });
   const key = S.sort.k, dir = S.sort.d;
@@ -474,13 +484,13 @@ function drawTrend(W, now) {
     if (x.t >= W.start && x.t < W.end) { const i = Math.floor((x.t - W.start) / W.bms); cur[i] += x.tot; cnt[i]++; }
     else if (x.t >= W.start - W.span && x.t < W.start) prv[Math.floor((x.t - W.start + W.span) / W.bms)] += x.tot;
   }
-  const nowIdx = Math.min(W.n - 1, Math.floor((now - W.start) / W.bms));
+  const nowIdx = Math.max(0, Math.min(W.n - 1, Math.floor((now - W.start) / W.bms)));
   const max = niceMax(Math.max(...cur.slice(0, nowIdx + 1), ...prv)), iw = w - m.l - m.r, ih = h - m.t - m.b;
   const X = i => m.l + (W.n === 1 ? iw / 2 : i / (W.n - 1) * iw), Y = v => m.t + ih - v / max * ih;
   let s = '<svg viewBox="0 0 ' + w + " " + h + '" role="img" aria-label="Grafik omzet">';
   for (let k = 0; k <= 4; k++) { const v = max / 4 * k, y = Y(v); s += '<line x1="' + m.l + '" x2="' + (w - m.r) + '" y1="' + y + '" y2="' + y + '" style="stroke:' + (k ? "var(--grid)" : "var(--axis)") + '" stroke-width="1"/><text x="' + (m.l - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" style="fill:var(--muted)">' + rpC(v) + "</text>"; }
   const step = Math.ceil(W.n / (w < 520 ? 4 : 7));
-  for (let i = 0; i < W.n; i += step) { const d = new Date(W.start + i * W.bms); s += '<text x="' + X(i) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="11" style="fill:var(--muted)">' + (S.range === "24h" ? pad(d.getHours()) + ":00" : dShort.format(d)) + "</text>"; }
+  for (let i = 0; i < W.n; i += step) { const d = new Date(W.start + i * W.bms); s += '<text x="' + X(i) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="11" style="fill:var(--muted)">' + (W.bms === 36e5 ? pad(d.getHours()) + ":00" : dShort.format(d)) + "</text>"; }
   const path = (arr, to) => arr.slice(0, to + 1).map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
   s += '<path d="' + path(prv, W.n - 1) + '" fill="none" stroke-width="2" stroke-dasharray="5 4" style="stroke:var(--muted)"/>';
   s += '<path d="' + path(cur, nowIdx) + " L" + X(nowIdx).toFixed(1) + " " + Y(0) + " L" + X(0) + " " + Y(0) + ' Z" style="fill:var(--s1);opacity:.14"/>';
@@ -496,7 +506,7 @@ function drawTrend(W, now) {
     let i = Math.round((px - r.left) / r.width * (W.n - 1)); i = Math.max(0, Math.min(W.n - 1, i));
     xh.setAttribute("x1", X(i)); xh.setAttribute("x2", X(i)); xh.setAttribute("visibility", "visible");
     const live = i <= nowIdx; xd.setAttribute("cx", X(i)); xd.setAttribute("cy", Y(cur[i])); xd.setAttribute("visibility", live ? "visible" : "hidden");
-    const d = new Date(W.start + i * W.bms), lab = S.range === "24h" ? dShort.format(d) + ", " + pad(d.getHours()) + ":00–" + pad((d.getHours() + 1) % 24) + ":00" : dLong.format(d);
+    const d = new Date(W.start + i * W.bms), lab = W.bms === 36e5 ? dShort.format(d) + ", " + pad(d.getHours()) + ":00–" + pad((d.getHours() + 1) % 24) + ":00" : dLong.format(d);
     tip.innerHTML = "<b>" + lab + "</b><div><span>Periode ini</span><span>" + (live ? rp(cur[i]) : "—") + "</span></div><div><span>Transaksi</span><span>" + (live ? nf.format(cnt[i]) : "—") + "</span></div><div><span>Sebelumnya</span><span>" + rp(prv[i]) + "</span></div>";
     tip.hidden = false;
     const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX), cy = (ev.touches ? ev.touches[0].clientY : ev.clientY);
@@ -516,7 +526,13 @@ $("cats").onclick = e => { const b = e.target.closest("button"); if (!b) return;
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 $("brands").innerHTML = '<button class="bchip" data-b="all" aria-pressed="true">Semua brand</button>' + PRODUCTS.map(p => '<button class="bchip" data-b="' + esc(p.n) + '" aria-pressed="false"><span class="bi" hidden><img src="logos/' + slug(p.n) + '.png" alt="" onload="this.parentNode.hidden=false" onerror="this.parentNode.remove()"></span>' + esc(p.n) + "</button>").join("");
 $("brands").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.brand = b.dataset.b; $("brands").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); S.trendHover = false; render(); };
-$("range").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.range = b.dataset.r; $("range").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); S.trendHover = false; render(); };
+$("dayPick").onchange = e => {
+  const v = e.target.value, seg = $("range").querySelectorAll("button");
+  if (v) { S.range = "day"; S.day = v; seg.forEach(x => x.setAttribute("aria-pressed", "false")); $("dayWrap").classList.add("on"); }
+  else { S.range = "7d"; S.day = ""; seg.forEach(x => x.setAttribute("aria-pressed", x.dataset.r === "7d")); $("dayWrap").classList.remove("on"); }
+  S.trendHover = false; render();
+};
+$("range").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.range = b.dataset.r; S.day = ""; $("dayPick").value = ""; $("dayWrap").classList.remove("on"); $("range").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); S.trendHover = false; render(); };
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { S.trendHover = false; render(); }, 120); });
 
 /* Tema warna: otomatis, terang, gelap, Kino */
