@@ -118,6 +118,19 @@ button{font:inherit; color:inherit}
 .tip div{display:flex; justify-content:space-between; gap:14px; color:var(--ink2)}
 .tip div span:last-child{color:var(--ink); font-weight:600}
 
+.donut{display:flex; flex-wrap:wrap; gap:14px 20px; align-items:center}
+.donut svg{flex:none; max-width:100%}
+.dleg{flex:1 1 170px; min-width:0; display:flex; flex-direction:column; gap:7px}
+.lgr{display:grid; grid-template-columns:12px minmax(0,1fr) auto; gap:8px; align-items:center; font-size:13px}
+.lgr .nm{overflow-wrap:anywhere; line-height:1.25}
+#prodBars .cb{height:240px}
+.lgr .vl{color:var(--ink2); font-variant-numeric:tabular-nums}
+.cols{display:flex; gap:10px; overflow-x:auto; padding-bottom:4px}
+.col{flex:1 0 64px; display:flex; flex-direction:column; align-items:center; gap:6px; min-width:0}
+.cv{font-size:11px; color:var(--ink2); font-variant-numeric:tabular-nums}
+.cb{display:flex; align-items:flex-end; justify-content:center; width:100%; height:150px; border-bottom:1px solid var(--axis)}
+.cb span{display:block; width:60%; max-width:44px; border-radius:5px 5px 0 0}
+.cn{font-size:11px; color:var(--ink); text-align:center; line-height:1.25; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word}
 .bars{display:flex; flex-direction:column; gap:9px}
 .br{display:grid; grid-template-columns:minmax(90px,150px) minmax(0,1fr) auto; gap:10px; align-items:center; font-size:13px}
 .br .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink)}
@@ -432,19 +445,40 @@ function render() {
   const cats = groupBy(W.start, hi, "c").sort((a, b) => b.rev - a.rev);
   const catSum = cats.reduce((a, x) => a + x.rev, 0);
   $("catTotal").textContent = rpC(catSum);
-  $("catBars").innerHTML = cats.length ? cats.map(x => barRow(x.k, x.rev, cats[0].rev, catColor(x.k), Math.round(x.rev / catSum * 100) + "% · " + rpC(x.rev), x.k + ": " + rp(x.rev))).join("") : '<div class="empty">Belum ada transaksi pada periode ini.</div>';
+  $("catBars").innerHTML = donut(cats.map(x => ({ k: x.k, v: x.rev, color: catColor(x.k) })));
 
   const prods = groupBy(W.start, hi, "n").sort((a, b) => b.rev - a.rev);
-  $("prodBars").innerHTML = prods.length ? prods.slice(0, 8).map(x => barRow(x.k, x.rev, prods[0].rev, catColor(x.c), rpC(x.rev), x.k + ": " + rp(x.rev) + " · " + nf.format(x.units) + " unit")).join("") : '<div class="empty">Belum ada transaksi pada periode ini.</div>';
+  $("prodBars").innerHTML = cols(prods.slice(0, 8).map(x => ({ k: x.k, v: x.rev, color: catColor(x.c), t: x.k + ": " + rp(x.rev) + " · " + nf.format(x.units) + " unit" })));
 
   const chs = groupBy(W.start, hi, "ch").sort((a, b) => b.rev - a.rev);
-  $("chBars").innerHTML = chs.map(x => barRow(x.k, x.rev, chs[0].rev, "var(--s1)", rpC(x.rev), x.k + ": " + rp(x.rev))).join("");
+  $("chBars").innerHTML = donut(chs.map(x => ({ k: x.k, v: x.rev, color: chColor(x.k) })));
   const rgs = groupBy(W.start, hi, "rg").sort((a, b) => b.rev - a.rev).slice(0, 6);
-  $("rgBars").innerHTML = rgs.map(x => barRow(x.k, x.rev, rgs[0].rev, "var(--s1)", rpC(x.rev), x.k + ": " + rp(x.rev))).join("");
+  $("rgBars").innerHTML = cols(rgs.map(x => ({ k: x.k, v: x.rev, color: "var(--s1)", t: x.k + ": " + rp(x.rev) })));
 
   renderFeed();
   renderTable(W, now, prods);
 }
+
+/* ===== Diagram lingkaran (donut) dan kolom (tabung) ===== */
+function donut(items) {
+  const tot = items.reduce((a, x) => a + x.v, 0);
+  if (!tot) return '<div class="empty">Belum ada transaksi pada periode ini.</div>';
+  const r = 58, C = 2 * Math.PI * r, gap = items.length > 1 ? 3 : 0; let off = 0, segs = "";
+  items.forEach(x => {
+    const len = x.v / tot * C, dl = Math.max(.5, len - gap);
+    segs += '<circle cx="80" cy="80" r="' + r + '" fill="none" stroke-width="24" style="stroke:' + x.color + '" stroke-dasharray="' + dl.toFixed(2) + " " + (C - dl).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 80 80)"><title>' + esc(x.k) + ": " + rp(x.v) + "</title></circle>";
+    off += len;
+  });
+  const svg = '<svg viewBox="0 0 160 160" width="150" height="150" role="img" aria-label="Diagram lingkaran omzet">' + segs + '<text x="80" y="76" text-anchor="middle" font-size="11" style="fill:var(--ink2)">Total</text><text x="80" y="96" text-anchor="middle" font-size="15" font-weight="700" style="fill:var(--ink)">' + rpC(tot) + "</text></svg>";
+  const leg = items.map(x => '<div class="lgr"><span class="sw" style="background:' + x.color + '"></span><span class="nm" title="' + esc(x.k) + '">' + esc(x.k) + '</span><span class="vl">' + Math.round(x.v / tot * 100) + "% · " + rpC(x.v) + "</span></div>").join("");
+  return '<div class="donut">' + svg + '<div class="dleg">' + leg + "</div></div>";
+}
+function cols(items) {
+  if (!items.length) return '<div class="empty">Belum ada transaksi pada periode ini.</div>';
+  const mx = Math.max.apply(null, items.map(x => x.v));
+  return '<div class="cols">' + items.map(x => '<div class="col" title="' + esc(x.t) + '"><span class="cv">' + rpC(x.v) + '</span><span class="cb"><span style="height:' + Math.max(2, x.v / mx * 100).toFixed(1) + "%;background:" + x.color + '"></span></span><span class="cn">' + esc(x.k) + "</span></div>").join("") + "</div>";
+}
+const chColor = n => { const i = CHANNELS.findIndex(c => c.n === n); return i < 0 ? "var(--gray)" : "var(--s" + (i + 1) + ")"; };
 function barRow(name, v, max, color, label, title) {
   return '<div class="br" title="' + esc(title) + '"><span class="nm">' + esc(name) + '</span><span class="tr"><span class="fl" style="display:block;width:' + Math.max(1, v / max * 100).toFixed(1) + "%;background:" + color + '"></span></span><span class="vl">' + esc(label) + "</span></div>";
 }
